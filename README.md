@@ -13,8 +13,13 @@ This project extends TIMEVIEW ("Towards Transparent Time Series Forecasting") wi
 ## Installation
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
+chmod +x setup.sh
+./setup.sh
+```
+
+## Reproducing Results
+```bash
+uv run src/timeview_adaptive_experiments.py
 ```
 
 ## Development
@@ -25,4 +30,6 @@ uv run ruff check src/
 
 # Format
 uv run ruff format src/
+
+# Test: TODO
 ```

@@ -250,7 +250,7 @@ class TimeviewAdaptive(nn.Module):
             y_mean = y_mean + bias
 
         PhiSigma = torch.matmul(Phi.unsqueeze(0), Sigma)
-        y_var = torch.sum(PhiSigma * Phi.unsqueeze(0), dim=-1) + self.sigma * *2
+        y_var = torch.sum(PhiSigma * Phi.unsqueeze(0), dim=-1) + self.sigma * 2
 
         return y_mean, y_var
 
