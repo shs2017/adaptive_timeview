@@ -9,17 +9,12 @@ from timeview_adaptive import create_knots
 
 
 class DatasetLoader:
-    """Base class for dataset loaders."""
 
     def load(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[np.ndarray], list[np.ndarray]]:
-        """Load dataset and return (x, t_common, y_interp, ts_list, ys_list)."""
         raise NotImplementedError
 
 
 class AirfoilLoader(DatasetLoader):
-    """
-    Loader for Airfoil Self-Noise dataset.
-    """
 
     def __init__(self, data_path: Path | None = None, log_t: bool = True):
         self.data_path = data_path or DATA_DIR / "airfoil" / "airfoil_self_noise.dat"
@@ -89,10 +84,6 @@ class AirfoilLoader(DatasetLoader):
 
 
 class FLChainLoader(DatasetLoader):
-    """
-    Loader for FLChain dataset.
-    """
-
     FLC_GRP_CATEGORIES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     def __init__(self, data_path: Path | None = None, subset: int | str = 1000):
@@ -169,10 +160,6 @@ class FLChainLoader(DatasetLoader):
 
 
 class StressStrainLoader(DatasetLoader):
-    """
-    Loader for Stress-Strain curves dataset.
-    """
-
     ALL_LOTS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
 
     def __init__(
@@ -271,10 +258,6 @@ class StressStrainLoader(DatasetLoader):
 
 # TODO: Implement this
 # class TacrolimusLoader(DatasetLoader):
-#     """
-#     Loader for Tacrolimus pharmacokinetic data.
-#     """
-
 #     def __init__(self, data_path: Path | None = None):
 #         self.data_path = data_path or DATA_DIR / "tacrolimus"
 
@@ -287,17 +270,10 @@ class StressStrainLoader(DatasetLoader):
 #                 "This dataset is not publicly available. "
 #                 "Contact TIMEVIEW paper authors to obtain the dataset."
 #             )
-
-#         # TODO: Implement actual loading when data is available
 #         raise NotImplementedError("Real Tacrolimus data loading not implemented")
 
 
 class PhysioNetLoader(DatasetLoader):
-    """
-    Loader for PhysioNet Challenge 2012 data.
-    Download from: https://physionet.org/content/challenge-2012/1.0.0/
-    """
-
     def __init__(self, data_path: Path | None = None, vital: str = "HR"):
         self.data_path = (
             data_path or DATA_DIR / "physionet.org" / "files" / "challenge-2012" / "1.0.0"
@@ -447,11 +423,6 @@ def normalize_features(
     x_test: torch.Tensor,
     continuous_indices: list[int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Matches TIMEVIEW's ColumnTransformer pipeline which applies StandardScaler
-    to continuous features after the train/test split, avoiding data leakage.
-    Binary and one-hot features are left unchanged.
-    """
     x_train = x_train.clone()
     x_test = x_test.clone()
 
@@ -469,10 +440,6 @@ def normalize_features(
 
 
 class YNormalizer:
-    """
-    Y (target) normalizer matching TIMEVIEW's baselines.py YNormalizer.
-    """
-
     def __init__(self):
         self.y_mean: float = 0.0
         self.y_std: float = 1.0

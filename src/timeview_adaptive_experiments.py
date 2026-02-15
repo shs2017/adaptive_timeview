@@ -367,7 +367,6 @@ def run_aec_experiment(
     n_epochs: int = 200,
     knots: torch.Tensor | None = None,
 ) -> dict:
-    """Compare AEC across model variants."""
     results = {}
     input_dim = x_train.shape[1]
 
@@ -407,10 +406,6 @@ def compute_uncertainty_decomposition(
     y_obs: torch.Tensor,
     t_pred: torch.Tensor,
 ) -> dict:
-    """
-    Decompose predictive variance into three components:
-        Var[y(t)] = prior_epistemic(t) - info_gained(t) + noise(t)
-    """
     model.eval()
     with torch.no_grad():
         mu_0, Sigma_0, _bias = model.encode(x)
@@ -461,9 +456,6 @@ def run_uncertainty_decomposition_experiment(
     t: torch.Tensor,
     n_obs_values: list[int] | None = None,
 ) -> dict:
-    """
-    Run uncertainty decomposition at different observation counts.
-    """
     if n_obs_values is None:
         n_obs_values = [2, 5, 10, 20]
 

@@ -36,15 +36,12 @@ def set_seed(seed=SEED):
 
 
 def generate_synthetic_data(n_samples=100, n_timepoints=50, input_dim=4, seed=SEED):
-    """Generate synthetic data for visualization."""
     set_seed(seed)
     t = torch.linspace(0, 1, n_timepoints)
 
-    # Random static features
     x = torch.randn(n_samples, input_dim)
-
-    # Generate trajectories as combinations of sinusoids + trends (varied by x)
     y = torch.zeros(n_samples, n_timepoints)
+
     for i in range(n_samples):
         amp1 = 0.5 + 0.3 * x[i, 0].item()
         amp2 = 0.3 + 0.2 * x[i, 1].item()
@@ -57,25 +54,19 @@ def generate_synthetic_data(n_samples=100, n_timepoints=50, input_dim=4, seed=SE
 
 
 def train_demo_model(x, t, y, model_class=TimeviewAdaptive, n_basis=7, **kwargs):
-    """Train a model for demo purposes."""
     input_dim = x.shape[1]
     model = model_class(input_dim=input_dim, n_basis=n_basis, **kwargs)
     train_model(model, x, t, y, n_epochs=100, lr=1e-3, n_obs=10, verbose=False)
     return model
 
 
-# =============================================================================
-# Figure 1: B-Spline Basis Functions
-# =============================================================================
-
 def plot_bspline_basis(save=True):
-    """Visualize B-spline basis functions for different n_basis values."""
     fig, axes = plt.subplots(1, 3, figsize=(14, 3.5))
     t = torch.linspace(0, 1, 200)
 
     for ax, nb in zip(axes, [5, 7, 9], strict=True):
         knots = create_knots(nb)
-        Phi = bspline_basis(t, knots)  # (200, nb)
+        Phi = bspline_basis(t, knots)
 
         for j in range(nb):
             ax.plot(t.numpy(), Phi[:, j].numpy(), linewidth=1.5, label=f"$\\phi_{{{j+1}}}$")
@@ -94,20 +85,13 @@ def plot_bspline_basis(save=True):
     print("  [ok] bspline_basis.png")
 
 
-# =============================================================================
-# Figure 2: Prior → Posterior Adaptation (main concept figure)
-# =============================================================================
-
 def plot_adaptation_demo(save=True):
-    """Show prior predictions, observations, and posterior predictions."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=50, input_dim=4)
 
-    # Train model
     model = train_demo_model(x, t, y, n_basis=7, covariance_type="low_rank")
     model.eval()
 
-    # Pick a sample
     idx = 5
     x_i = x[idx : idx + 1]
     y_i = y[idx]
@@ -115,10 +99,8 @@ def plot_adaptation_demo(save=True):
     with torch.no_grad():
         mu_0, Sigma_0 = model.encode(x_i)
 
-        # Prior predictions
         y_prior_mean, y_prior_var = model.predict(mu_0, Sigma_0, t)
 
-        # Bayesian update with n_obs observations
         obs_counts = [0, 3, 10, 25]
         fig, axes = plt.subplots(1, 4, figsize=(16, 3.5), sharey=True)
 
@@ -138,14 +120,11 @@ def plot_adaptation_demo(save=True):
             std = np.sqrt(var)
             t_np = t.numpy()
 
-            # Ground truth
             ax.plot(t_np, y_i.numpy(), "k-", alpha=0.3, linewidth=1, label="Ground truth")
-            # Prediction
             ax.plot(t_np, mean, "b-", linewidth=1.5, label="Prediction")
-            # Uncertainty band
             ax.fill_between(t_np, mean - 1.96 * std, mean + 1.96 * std,
                             alpha=0.2, color="blue", label="95% CI")
-            # Observations
+
             if n_obs > 0:
                 ax.scatter(t[:n_obs].numpy(), y_i[:n_obs].numpy(),
                            c="red", s=30, zorder=5, label="Observations")
@@ -165,12 +144,7 @@ def plot_adaptation_demo(save=True):
     print("  [ok] adaptation_demo.png")
 
 
-# =============================================================================
-# Figure 3: Coefficient Distribution Evolution
-# =============================================================================
-
 def plot_coefficient_evolution(save=True):
-    """Show how the distribution over coefficients evolves with observations."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=50, input_dim=4)
     model = train_demo_model(x, t, y, n_basis=7, covariance_type="low_rank")
@@ -217,12 +191,7 @@ def plot_coefficient_evolution(save=True):
     print("  [ok] coefficient_evolution.png")
 
 
-# =============================================================================
-# Figure 4: Uncertainty Decomposition
-# =============================================================================
-
 def plot_uncertainty_decomposition(save=True):
-    """Visualize epistemic/aleatoric decomposition as observations increase."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=50, input_dim=4)
     model = train_demo_model(x, t, y, n_basis=7, covariance_type="low_rank")
@@ -237,10 +206,9 @@ def plot_uncertainty_decomposition(save=True):
 
     with torch.no_grad():
         mu_0, Sigma_0 = model.encode(x_i)
-        Phi = model.get_basis(t)  # (T, n_basis)
+        Phi = model.get_basis(t)
 
-        # Prior variance at each time
-        PhiSigma0 = torch.matmul(Phi.unsqueeze(0), Sigma_0)  # (1, T, n_basis)
+        PhiSigma0 = torch.matmul(Phi.unsqueeze(0), Sigma_0)
         prior_var = torch.sum(PhiSigma0 * Phi.unsqueeze(0), dim=-1)[0].numpy()
 
         sigma2 = model.sigma.item() ** 2
@@ -251,11 +219,9 @@ def plot_uncertainty_decomposition(save=True):
             y_obs = y_i[:n_obs].unsqueeze(0)
             _, _, mu_post, Sigma_post = model.update_and_predict(x_i, t_obs, y_obs, t)
 
-            # Posterior epistemic variance
             PhiSigmaN = torch.matmul(Phi.unsqueeze(0), Sigma_post)
             post_var = torch.sum(PhiSigmaN * Phi.unsqueeze(0), dim=-1)[0].numpy()
 
-            # Decomposition: total = prior - info_gained + noise
             info_gained = prior_var - post_var
             remaining_epistemic = post_var
 
@@ -269,7 +235,6 @@ def plot_uncertainty_decomposition(save=True):
                             noise_var + remaining_epistemic + info_gained,
                             alpha=0.4, color="green", label="Info gained")
 
-            # Mark observation times
             for ti in t_obs.numpy():
                 ax.axvline(ti, color="red", alpha=0.3, linewidth=0.5)
 
@@ -288,12 +253,7 @@ def plot_uncertainty_decomposition(save=True):
     print("  [ok] uncertainty_decomposition_viz.png")
 
 
-# =============================================================================
-# Figure 5: Active vs Uniform Scheduling
-# =============================================================================
-
 def plot_active_scheduling(save=True):
-    """Compare active (information-gain) vs uniform observation scheduling."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=50, input_dim=4)
     model = train_demo_model(x, t, y, n_basis=7, covariance_type="low_rank")
@@ -301,7 +261,6 @@ def plot_active_scheduling(save=True):
 
     scheduler = ActiveObservationScheduler(model)
 
-    # Test on a few samples
     n_test = 20
     x_test = x[:n_test]
     y_test = y[:n_test]
@@ -318,22 +277,18 @@ def plot_active_scheduling(save=True):
             t_obs_uniform = t[:n_obs]
             y_obs_uniform = y_test[:, :n_obs]
 
-            # Uniform: use first n_obs points
             y_pred_u, y_var_u, _, _ = model.update_and_predict(x_test, t_obs_uniform, y_obs_uniform, t)
             remaining_mask = torch.ones(len(t), dtype=torch.bool)
             remaining_mask[:n_obs] = False
             mse_uniform = ((y_pred_u[:, remaining_mask] - y_test[:, remaining_mask]) ** 2).mean().item()
             uniform_mses.append(mse_uniform)
 
-            # Active: greedily select observation times
             if step == 0:
                 active_obs_idx = list(range(n_initial))
             else:
-                # Get posterior from current active observations
                 t_active_obs = t[active_obs_idx]
                 y_active_obs = y_test[:, active_obs_idx]
 
-                # Candidates = unobserved times
                 all_idx = set(range(len(t)))
                 cand_idx = sorted(all_idx - set(active_obs_idx))
                 t_candidates = t[cand_idx]
@@ -368,12 +323,7 @@ def plot_active_scheduling(save=True):
     print("  [ok] active_vs_uniform.png")
 
 
-# =============================================================================
-# Figure 6: Gating Mechanism Visualization
-# =============================================================================
-
 def plot_gating_demo(save=True):
-    """Show how the gate blends prior and posterior predictions."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=80, input_dim=4)
     model = train_demo_model(x, t, y, model_class=TimeviewAdaptiveGated,
@@ -383,23 +333,19 @@ def plot_gating_demo(save=True):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
     with torch.no_grad():
-        # Show 3 samples with different gate values
         samples = [0, 10, 20]
         for ax, idx in zip(axes, samples, strict=True):
             x_i = x[idx : idx + 1]
             y_i = y[idx]
 
             mu_0, Sigma_0 = model.encode(x_i)
-            # Prior prediction
             y_prior, _ = model.predict(mu_0, Sigma_0, t)
 
-            # Posterior with 10 obs
             n_obs = 10
             t_obs = t[:n_obs]
             y_obs = y_i[:n_obs].unsqueeze(0)
             y_gated, y_var, _, _ = model.update_and_predict(x_i, t_obs, y_obs, t)
 
-            # Get gate value
             y_pr_obs, y_pr_var_obs = model.predict(mu_0, Sigma_0, t_obs)
             prior_mse = ((y_obs - y_pr_obs) ** 2).mean(dim=1, keepdim=True)
             obs_unc = y_pr_var_obs.mean(dim=1, keepdim=True)
@@ -430,12 +376,7 @@ def plot_gating_demo(save=True):
     print("  [ok] gating_demo.png")
 
 
-# =============================================================================
-# Figure 7: Model Comparison Overview
-# =============================================================================
-
 def plot_model_comparison(save=True):
-    """Compare all model variants on same data."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=80, input_dim=4)
 
@@ -447,7 +388,6 @@ def plot_model_comparison(save=True):
                                         n_basis=9, covariance_type="low_rank"),
     }
 
-    # Evaluate on test sample
     idx = 7
     x_i = x[idx : idx + 1]
     y_i = y[idx]
@@ -488,12 +428,7 @@ def plot_model_comparison(save=True):
     print("  [ok] model_comparison.png")
 
 
-# =============================================================================
-# Figure 8: Information Gain Landscape
-# =============================================================================
-
 def plot_information_gain_landscape(save=True):
-    """Show the information gain landscape over candidate times."""
     set_seed()
     x, t, y = generate_synthetic_data(n_samples=50, input_dim=4)
     model = train_demo_model(x, t, y, n_basis=7, covariance_type="low_rank")
@@ -514,11 +449,9 @@ def plot_information_gain_landscape(save=True):
             y_obs = y_i[:n_obs].unsqueeze(0)
             _, _, mu_post, Sigma_post = model.update_and_predict(x_i, t_obs, y_obs, t)
 
-            # Candidates = all time points (for visualization)
             ig = scheduler.compute_information_gain(mu_post, Sigma_post, t)
             ig_np = ig[0].numpy()
 
-            # Prediction uncertainty
             _, y_var = model.predict(mu_post, Sigma_post, t)
             std = np.sqrt(y_var[0].numpy())
 
@@ -527,7 +460,6 @@ def plot_information_gain_landscape(save=True):
             ax.bar(t_np, ig_np, width=0.018, alpha=0.6, color="green", label="Info gain")
             ax2.plot(t_np, std, "b-", alpha=0.7, linewidth=1, label="Pred. std")
 
-            # Mark observed times
             for ti in t_obs.numpy():
                 ax.axvline(ti, color="red", alpha=0.4, linewidth=0.8, linestyle="--")
 
@@ -548,10 +480,6 @@ def plot_information_gain_landscape(save=True):
     plt.close()
     print("  [ok] ig_landscape.png")
 
-
-# =============================================================================
-# Main
-# =============================================================================
 
 def main():
     print("TIMEVIEW-Adaptive Visualization Program")

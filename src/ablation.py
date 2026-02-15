@@ -341,10 +341,6 @@ def run_kl_weight_ablation(
 
 
 def run_nobs_ablation_all_datasets(seed: int = 0, n_epochs: int = 1000):
-    """
-    Run n_obs ablation on all datasets, showing how adaptation improves
-    """
-
     datasets = ["airfoil", "flchain", "stress_strain"]
     n_obs_values = [5, 10, 15, 20, 25, 30, 35, 40, 45]
 

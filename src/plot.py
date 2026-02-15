@@ -300,7 +300,6 @@ def plot_heteroscedastic_comparison(results: dict):
 
 
 def plot_aec(aec_results: dict, label: str = "Model", ax: plt.Axes | None = None):
-    """Plot Adaptation Efficiency Curve."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -410,7 +409,6 @@ def plot_aec_comparison(aec_results: dict):
         "standard": "steelblue", "gated": "purple", "best_config": "orange",
     }
 
-    # AEC curves
     ax = axes[0]
     for name, aec in aec_results.items():
         ax.plot(aec["n_obs"], aec["aec"], "o-", markersize=3,

@@ -1,18 +1,3 @@
-"""
-TIMEVIEW-Adaptive GIF Animation Generator
-
-Generates 4 supplemental animations for the paper:
-1. adaptation_progression.gif - Bayesian adaptation as observations arrive
-2. active_vs_uniform.gif - Side-by-side active vs uniform scheduling
-3. coefficient_evolution.gif - Coefficient posterior concentration
-4. ig_landscape_evolution.gif - Information gain landscape shifting
-
-Run from src/ directory:
-    python generate_animations.py
-
-Output: ../figures/animations/
-"""
-
 from io import BytesIO
 from pathlib import Path
 
@@ -28,14 +13,12 @@ from timeview_adaptive import (
     train_model,
 )
 
-# Directories
 PROJECT_ROOT = Path(__file__).parent.parent
 ANIMATIONS_DIR = PROJECT_ROOT / "figures" / "animations"
 CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
 ANIMATIONS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Plotting style
 plt.rcParams.update({
     "font.size": 11,
     "axes.titlesize": 13,
@@ -53,7 +36,6 @@ def set_seed(seed=SEED):
 
 
 def generate_synthetic_data(n_samples=100, n_timepoints=50, input_dim=4, seed=SEED):
-    """Generate synthetic data for animations."""
     set_seed(seed)
     t = torch.linspace(0, 1, n_timepoints)
     x = torch.randn(n_samples, input_dim)
@@ -69,7 +51,6 @@ def generate_synthetic_data(n_samples=100, n_timepoints=50, input_dim=4, seed=SE
 
 
 def get_model(x, t, y):
-    """Load or train model, caching to checkpoint."""
     ckpt_path = CHECKPOINT_DIR / "animation_model.pt"
     input_dim = x.shape[1]
     model = TimeviewAdaptive(input_dim=input_dim, n_basis=7, covariance_type="low_rank")
@@ -88,7 +69,6 @@ def get_model(x, t, y):
 
 
 def render_frame(fig):
-    """Convert matplotlib figure to PIL Image with fixed canvas size."""
     fig.canvas.draw()
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=fig.dpi)
@@ -99,25 +79,18 @@ def render_frame(fig):
 
 
 def save_gif(frames, path, fps=2):
-    """Save list of PIL Images as GIF, resizing to consistent dimensions."""
-    # Resize all frames to match the first frame
     target_size = frames[0].size
     resized = []
     for f in frames:
         if f.size != target_size:
             f = f.resize(target_size, Image.LANCZOS)
         resized.append(np.array(f))
-    duration = int(1000 / fps)  # ms per frame
+    duration = int(1000 / fps)
     iio.imwrite(path, resized, duration=duration, loop=0)
     print(f"  Saved {path} ({len(frames)} frames, {fps} fps)")
 
 
-# =============================================================================
-# Animation 1: Adaptation Progression
-# =============================================================================
-
 def generate_adaptation_progression(model, x, t, y):
-    """25 frames showing observation-by-observation adaptation."""
     print("\n[1/4] Generating adaptation_progression.gif...")
 
     idx = 5
@@ -132,7 +105,7 @@ def generate_adaptation_progression(model, x, t, y):
         mu_0, Sigma_0 = model.encode(x_i)
 
         for frame in range(n_frames):
-            n_obs = frame  # 0 to 24
+            n_obs = frame
 
             fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -149,14 +122,10 @@ def generate_adaptation_progression(model, x, t, y):
 
             std = np.sqrt(var)
 
-            # Ground truth
             ax.plot(t_np, y_true, "k--", alpha=0.4, linewidth=1.5, label="Ground truth")
-            # Prediction
             ax.plot(t_np, mean, "b-", linewidth=2, label="Prediction")
-            # CI
             ax.fill_between(t_np, mean - 1.96 * std, mean + 1.96 * std,
                             alpha=0.2, color="blue", label="95% CI")
-            # Observations
             if n_obs > 0:
                 ax.scatter(t[:n_obs].numpy(), y_i[:n_obs].numpy(),
                            c="red", s=50, zorder=5, edgecolors="darkred", label="Observations")
@@ -171,19 +140,13 @@ def generate_adaptation_progression(model, x, t, y):
             frames.append(render_frame(fig))
             plt.close(fig)
 
-    # Hold last frame for 2 extra seconds
     for _ in range(4):
         frames.append(frames[-1])
 
     save_gif(frames, ANIMATIONS_DIR / "adaptation_progression.gif", fps=2)
 
 
-# =============================================================================
-# Animation 2: Active vs Uniform Scheduling
-# =============================================================================
-
 def generate_active_vs_uniform(model, x, t, y):
-    """15 frames comparing active vs uniform scheduling side by side."""
     print("\n[2/4] Generating active_vs_uniform.gif...")
 
     idx = 5
@@ -196,7 +159,6 @@ def generate_active_vs_uniform(model, x, t, y):
     n_initial = 3
     n_steps = 12
 
-    # Pre-compute active observation sequence
     active_obs_idx = list(range(n_initial))
     active_sequence = [list(active_obs_idx)]
 
@@ -214,7 +176,6 @@ def generate_active_vs_uniform(model, x, t, y):
             active_obs_idx.append(cand_idx[best_cand])
             active_sequence.append(list(active_obs_idx))
 
-    # Generate frames
     frames = []
     with torch.no_grad():
         mu_0, Sigma_0 = model.encode(x_i)
@@ -224,7 +185,6 @@ def generate_active_vs_uniform(model, x, t, y):
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
 
-            # Active scheduling (left)
             a_idx = active_sequence[frame_idx]
             t_active = t[a_idx]
             y_active = y_i[a_idx].unsqueeze(0)
@@ -248,7 +208,6 @@ def generate_active_vs_uniform(model, x, t, y):
             ax1.legend(fontsize=8)
             ax1.grid(True, alpha=0.2)
 
-            # Uniform scheduling (right)
             t_uniform = t[:n_obs]
             y_uniform = y_i[:n_obs].unsqueeze(0)
             y_mean_u, y_var_u, _, _ = model.update_and_predict(x_i, t_uniform, y_uniform, t)
@@ -276,19 +235,13 @@ def generate_active_vs_uniform(model, x, t, y):
             frames.append(render_frame(fig))
             plt.close(fig)
 
-    # Hold last frame
     for _ in range(4):
         frames.append(frames[-1])
 
     save_gif(frames, ANIMATIONS_DIR / "active_vs_uniform.gif", fps=2)
 
 
-# =============================================================================
-# Animation 3: Coefficient Evolution
-# =============================================================================
-
 def generate_coefficient_evolution(model, x, t, y):
-    """20 frames showing coefficient posterior concentration."""
     print("\n[3/4] Generating coefficient_evolution.gif...")
 
     idx = 5
@@ -302,14 +255,13 @@ def generate_coefficient_evolution(model, x, t, y):
         n_basis = mu_0.shape[1]
         x_pos = np.arange(n_basis)
 
-        # Get consistent y-limits from prior
         mu_prior = mu_0[0].numpy()
         std_prior = np.sqrt(np.diag(Sigma_0[0].numpy()))
         y_min = (mu_prior - 2.5 * std_prior).min()
         y_max = (mu_prior + 2.5 * std_prior).max()
 
         for frame in range(n_frames):
-            n_obs = frame  # 0 to 19
+            n_obs = frame
 
             fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -334,7 +286,6 @@ def generate_coefficient_evolution(model, x, t, y):
             ax.set_ylim(y_min - 0.3, y_max + 0.3)
             ax.grid(True, alpha=0.2, axis="y")
 
-            # Add text showing total uncertainty
             total_unc = std.sum()
             ax.text(0.98, 0.95, f"Total std: {total_unc:.3f}",
                     transform=ax.transAxes, ha="right", va="top",
@@ -343,19 +294,13 @@ def generate_coefficient_evolution(model, x, t, y):
             frames.append(render_frame(fig))
             plt.close(fig)
 
-    # Hold last frame
     for _ in range(4):
         frames.append(frames[-1])
 
     save_gif(frames, ANIMATIONS_DIR / "coefficient_evolution.gif", fps=2)
 
 
-# =============================================================================
-# Animation 4: Information Gain Landscape Evolution
-# =============================================================================
-
 def generate_ig_landscape_evolution(model, x, t, y):
-    """15 frames showing IG landscape shifting as observations are added."""
     print("\n[4/4] Generating ig_landscape_evolution.gif...")
 
     idx = 5
@@ -373,17 +318,15 @@ def generate_ig_landscape_evolution(model, x, t, y):
         mu_0, Sigma_0 = model.encode(x_i)
 
         for frame in range(n_frames):
-            n_obs = frame + 1  # 1 to 15
+            n_obs = frame + 1
 
             if frame == 0:
                 obs_indices = [0]
             else:
-                # Use the observations accumulated so far
                 t_obs = t[obs_indices]
                 y_obs = y_i[obs_indices].unsqueeze(0)
                 _, _, mu_post, Sigma_post = model.update_and_predict(x_i, t_obs, y_obs, t)
 
-                # Find next best observation
                 all_idx = set(range(len(t)))
                 cand_idx = sorted(all_idx - set(obs_indices))
                 t_candidates = t[cand_idx]
@@ -391,7 +334,6 @@ def generate_ig_landscape_evolution(model, x, t, y):
                 best_cand = ig_cand[0].argmax().item()
                 obs_indices.append(cand_idx[best_cand])
 
-            # Compute IG landscape with current observations
             t_obs = t[obs_indices]
             y_obs = y_i[obs_indices].unsqueeze(0)
             _, _, mu_post, Sigma_post = model.update_and_predict(x_i, t_obs, y_obs, t)
@@ -400,14 +342,11 @@ def generate_ig_landscape_evolution(model, x, t, y):
 
             fig, ax = plt.subplots(figsize=(8, 5))
 
-            # IG bars
             ax.bar(t_np, ig_np, width=0.018, alpha=0.7, color="green", label="Info gain")
 
-            # Mark observed times
             for oi in obs_indices:
                 ax.axvline(t[oi].item(), color="red", alpha=0.6, linewidth=1.5, linestyle="--")
 
-            # Mark observation positions on x-axis
             ax.scatter(t[obs_indices].numpy(), np.zeros(len(obs_indices)),
                        c="red", s=80, zorder=5, marker="^", edgecolors="darkred",
                        label=f"Observed ({len(obs_indices)})")
@@ -422,22 +361,16 @@ def generate_ig_landscape_evolution(model, x, t, y):
             frames.append(render_frame(fig))
             plt.close(fig)
 
-    # Hold last frame
     for _ in range(4):
         frames.append(frames[-1])
 
     save_gif(frames, ANIMATIONS_DIR / "ig_landscape_evolution.gif", fps=2)
 
 
-# =============================================================================
-# Main
-# =============================================================================
-
 def main():
     print("TIMEVIEW-Adaptive Animation Generator")
     print("=" * 50)
 
-    # Generate data and train/load model
     x, t, y = generate_synthetic_data(n_samples=100, input_dim=4)
     model = get_model(x, t, y)
 

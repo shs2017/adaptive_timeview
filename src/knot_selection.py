@@ -5,9 +5,6 @@ import numpy as np
 def _get_knots_for_single_trajectory(
     t: np.ndarray, y: np.ndarray, n_internal_knots: int, s_guess: float | None = None
 ) -> tuple[np.ndarray, float]:
-    """
-    Ported from TIMEVIEW/timeview/knot_selection.py.
-    """
     from scipy.interpolate import UnivariateSpline
 
     tol_n_knots = 0
@@ -17,7 +14,6 @@ def _get_knots_for_single_trajectory(
 
     s = len(t) if s_guess is None else s_guess
 
-    # Check maximum knots possible
     found_knots = UnivariateSpline(t, y, s=0).get_knots()
     if n_internal_knots >= len(found_knots):
         return found_knots, 0.0

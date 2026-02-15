@@ -91,10 +91,6 @@ class TimeviewAdaptiveFullCholesky(TimeviewAdaptive):
 
 
 class TimeviewStatic(nn.Module):
-    """
-    TIMEVIEW baseline: no Bayesian updates.
-    """
-
     def __init__(
         self,
         input_dim: int,

@@ -83,4 +83,3 @@ def streaming_evaluation(
                 results["coverage_95"].append(coverage)
 
     return results
-

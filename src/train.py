@@ -26,9 +26,6 @@ def train_static_model(
     ts_val: list[np.ndarray] | None = None,
     ys_val: list[np.ndarray] | None = None,
 ) -> list[float]:
-    """
-    Train the static baseline model matching TIMEVIEW's training procedure.
-    """
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     losses = []
     best_loss = float("inf")

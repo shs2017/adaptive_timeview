@@ -42,7 +42,6 @@ MODEL_CONFIGS = {
 DATASETS = ["airfoil", "flchain", "stress_strain"]
 
 def load_data(dataset_name):
-    """Load dataset and return x, t, y tensors."""
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     x, t, y = load_dataset(dataset_name)
@@ -176,7 +175,6 @@ def create_app(dataset_name, retrain=False):
 
         html.Div(id="tab-content", style={"padding": "15px"}),
 
-        # Hidden stores
         dcc.Store(id="observation-store", data=[]),
         dcc.Store(id="dataset-cache", data={
             "t": t_np,
@@ -200,7 +198,6 @@ def create_app(dataset_name, retrain=False):
         [State("dataset-cache", "data")],
     )
     def update_observations(n_obs, clear_clicks, cache):
-        """Update observation list from slider or clear button."""
         ctx = callback_context
         if ctx.triggered and ctx.triggered[0]["prop_id"] == "clear-btn.n_clicks":
             return []
@@ -219,7 +216,6 @@ def create_app(dataset_name, retrain=False):
         prevent_initial_call=True,
     )
     def random_sample(n_clicks, cache):
-        """Pick a random test sample."""
         n_start = cache["n_test_start"]
         n_total = len(cache["y"])
         return int(np.random.randint(n_start, n_total))
@@ -235,7 +231,6 @@ def create_app(dataset_name, retrain=False):
         [State("dataset-cache", "data")],
     )
     def render_tab(tab, sample_idx, variant, obs_indices, cache):
-        """Render the active tab content."""
         t_tensor = torch.tensor(cache["t"], dtype=torch.float32)
         y_all = torch.tensor(cache["y"], dtype=torch.float32)
         x_all = torch.tensor(cache["x"], dtype=torch.float32)
@@ -264,7 +259,6 @@ def create_app(dataset_name, retrain=False):
         with torch.no_grad():
             mu_0, Sigma_0 = model.encode(x_i)
 
-            # Prior predictions
             y_prior_mean, y_prior_var = model.predict(mu_0, Sigma_0, t_tensor)
             prior_mean = y_prior_mean[0].numpy()
             prior_std = np.sqrt(y_prior_var[0].numpy())
@@ -319,7 +313,6 @@ def create_app(dataset_name, retrain=False):
                 name="Posterior mean", line=dict(color="blue", width=2),
             ))
 
-            # Observations
             obs_t = t_np[obs_indices]
             obs_y = y_true[obs_indices]
             fig.add_trace(go.Scatter(
