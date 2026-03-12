@@ -76,7 +76,7 @@ The approach works in three stages:
 
 ---
 
-## Prior vs Static Comparison
+## (WIP) Prior vs Static Comparison
 
 We compare the adaptive model's **prior** against the static model to measure how posterior performance changes with the number of observations used during training.
 
