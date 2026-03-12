@@ -76,6 +76,40 @@ The approach works in three stages:
 
 ---
 
+## (WIP) Prior vs Static Comparison
+
+We compare the adaptive model's **prior** against the static model to measure how posterior performance changes with the number of observations used during training.
+
+<table>
+<tr>
+<td width="40%">
+<img src="figures/prior_ratio_vs_static.png" alt="Prior Ratio vs Static"/>
+<p align="center"><b>Prior MSE / Static MSE vs Training n_obs</b><br/><sub>The adaptive model's prior is always worse than the static model, and degrades as training n_obs increases. Ratios at n_obs=30: Airfoil 10.5×, FLChain 4.5×, Stress-Strain 8.4×.</sub></p>
+</td>
+<td width="60%">
+<img src="figures/prior_vs_static_comparison.png" alt="Prior/Posterior vs Static"/>
+<p align="center"><b>Prior and Posterior MSE vs Static</b><br/><sub>Top: prior MSE as a function of training n_obs (dashed = static baseline). Bottom: posterior future MSE vs eval n_obs for each training configuration. Models perform best when eval n_obs matches training n_obs.</sub></p>
+</td>
+</tr>
+</table>
+
+**Prior MSE / Static MSE ratios across datasets:**
+
+| train\_n\_obs | Airfoil | FLChain | Stress-Strain |
+|:---:|:---:|:---:|:---:|
+| 2  | 1.26× | 1.67× | 1.66× |
+| 5  | 1.93× | 2.09× | 1.43× |
+| 10 | 2.92× | 2.39× | 1.86× |
+| 15 | 5.02× | 2.32× | 1.55× |
+| 20 | 6.12× | 3.30× | 1.38× |
+| 30 | 10.5× | 4.54× | 8.37× |
+
+The adaptive prior is consistently worse than static, and degrades as `train_n_obs` increases. The training objective optimises posterior NLL (after observing `train_n_obs` points), so the prior is shaped to produce a good posterior at that specific observation count rather than to be a good standalone predictor.
+
+Posterior performance (when eval n_obs matches training n_obs) consistently beats static: e.g. on Airfoil with train/eval n_obs=10, posterior future MSE is 0.716× static. However, large mismatches between training and evaluation n_obs lead to degraded performance.
+
+---
+
 ## Ablation Studies
 
 <table>
