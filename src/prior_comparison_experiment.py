@@ -67,6 +67,7 @@ def run_prior_vs_static(
     n_epochs: int = 1000,
     training_n_obs_values: list[int] | None = None,
     eval_n_obs_values: list[int] | None = None,
+    kl_weight: float = 0.01,
 ) -> dict:
     if training_n_obs_values is None:
         training_n_obs_values = [2, 5, 10, 15, 20, 30]
@@ -109,7 +110,7 @@ def run_prior_vs_static(
     }
 
     for train_n_obs in training_n_obs_values:
-        print(f"\n  Training adaptive model (train_n_obs={train_n_obs})...")
+        print(f"\n  Training adaptive model (train_n_obs={train_n_obs}, kl_weight={kl_weight})...")
         torch.manual_seed(seed)
         adaptive_model = TimeviewAdaptive(
             input_dim=x_tr.shape[1],
@@ -118,7 +119,7 @@ def run_prior_vs_static(
             covariance_type="diagonal",
             use_batchnorm=True,
             learn_noise=True,
-            kl_weight=0.01,
+            kl_weight=kl_weight,
             knots=knots_ds,
         )
         train_model(
@@ -282,6 +283,28 @@ def plot_prior_ratio(all_dataset_results: dict, output_path: Path | None = None)
     print(f"Saved plot to: {output_path}")
 
 
+def print_kl_comparison(results_with_kl: dict, results_no_kl: dict):
+    """Side-by-side comparison of prior MSE ratios with and without KL."""
+    all_datasets = list(results_with_kl.keys())
+    all_train_nobs = sorted({
+        n for res in results_with_kl.values()
+        for n in res["adaptive_models"]
+    })
+
+    for ds_name in all_datasets:
+        static_mse = results_with_kl[ds_name]["static"]["mse"]
+        print(f"\n{ds_name.upper()} — Prior MSE / Static MSE (static MSE={static_mse:.5f})")
+        print(f"  {'train_n_obs':>12} {'kl=0.01':>12} {'kl=0.00':>12} {'diff':>10}")
+        print(f"  {'-' * 50}")
+        for train_n in all_train_nobs:
+            if train_n not in results_with_kl[ds_name]["adaptive_models"]:
+                continue
+            r_kl = results_with_kl[ds_name]["adaptive_models"][train_n]["prior"]["mse"] / static_mse
+            r_no = results_no_kl[ds_name]["adaptive_models"][train_n]["prior"]["mse"] / static_mse
+            diff = r_no - r_kl
+            print(f"  {train_n:>12} {r_kl:>11.3f}x {r_no:>11.3f}x {diff:>+10.3f}")
+
+
 def main():
     seed = 0
     n_epochs = 1000
@@ -289,48 +312,56 @@ def main():
     training_n_obs_values = [2, 5, 10, 15, 20, 30]
     eval_n_obs_values = [1, 2, 5, 10, 15, 20, 30]
 
-    all_results = {}
-
+    # Run with kl_weight=0.01 (default)
+    print("\n" + "=" * 80)
+    print("EXPERIMENT 1: kl_weight=0.01 (default)")
+    print("=" * 80)
+    results_with_kl = {}
     for dataset_name in datasets:
         try:
             results = run_prior_vs_static(
-                dataset_name,
-                seed=seed,
-                n_epochs=n_epochs,
+                dataset_name, seed=seed, n_epochs=n_epochs,
                 training_n_obs_values=training_n_obs_values,
-                eval_n_obs_values=eval_n_obs_values,
+                eval_n_obs_values=eval_n_obs_values, kl_weight=0.01,
             )
-            all_results[dataset_name] = results
+            results_with_kl[dataset_name] = results
             print_summary_table(results, dataset_name)
         except FileNotFoundError as e:
             print(f"\nSkipping {dataset_name}: {e}")
-            continue
 
-    if all_results:
-        plot_prior_vs_static(all_results)
-        plot_prior_ratio(all_results)
-
+    # Run with kl_weight=0.0
     print("\n" + "=" * 80)
-    print("CROSS-DATASET SUMMARY: Prior MSE / Static MSE ratios")
+    print("EXPERIMENT 2: kl_weight=0.0 (no KL regularization)")
     print("=" * 80)
-    header = f"{'train_n_obs':>12}" + "".join(f"  {ds:>15}" for ds in all_results)
-    print(header)
-    print("-" * len(header))
+    results_no_kl = {}
+    for dataset_name in datasets:
+        try:
+            results = run_prior_vs_static(
+                dataset_name, seed=seed, n_epochs=n_epochs,
+                training_n_obs_values=training_n_obs_values,
+                eval_n_obs_values=eval_n_obs_values, kl_weight=0.0,
+            )
+            results_no_kl[dataset_name] = results
+            print_summary_table(results, dataset_name)
+        except FileNotFoundError as e:
+            print(f"\nSkipping {dataset_name}: {e}")
 
-    all_train_nobs = sorted({
-        n for res in all_results.values()
-        for n in res["adaptive_models"]
-    })
+    # Side-by-side comparison
+    if results_with_kl and results_no_kl:
+        print("\n" + "=" * 80)
+        print("KL ABLATION: Prior MSE ratio with vs without KL regularization")
+        print("(Does removing KL reduce prior degradation with large n_obs?)")
+        print("=" * 80)
+        print_kl_comparison(results_with_kl, results_no_kl)
 
-    for train_n in all_train_nobs:
-        row = f"{train_n:>12}"
-        for ds_name, res in all_results.items():
-            if train_n in res["adaptive_models"]:
-                ratio = res["adaptive_models"][train_n]["prior"]["mse"] / res["static"]["mse"]
-                row += f"  {ratio:>15.3f}x"
-            else:
-                row += f"  {'N/A':>15}"
-        print(row)
+        plot_prior_vs_static(results_with_kl,
+            output_path=Path(__file__).parent.parent / "figures" / "prior_vs_static_kl001.png")
+        plot_prior_vs_static(results_no_kl,
+            output_path=Path(__file__).parent.parent / "figures" / "prior_vs_static_kl000.png")
+        plot_prior_ratio(results_with_kl,
+            output_path=Path(__file__).parent.parent / "figures" / "prior_ratio_kl001.png")
+        plot_prior_ratio(results_no_kl,
+            output_path=Path(__file__).parent.parent / "figures" / "prior_ratio_kl000.png")
 
 
 if __name__ == "__main__":
