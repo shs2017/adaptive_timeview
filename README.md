@@ -91,14 +91,14 @@ The default training objective (posterior NLL at a fixed n\_obs) encourages the 
 
 ### Alternative training strategies recover prior quality
 
-To fix this, we compare four alternatives to standard training, all evaluated at `train_n_obs=20` with HPO (Optuna TPE, 6 trials per variant per dataset).
+To fix this, we compare four alternatives to standard training. All are benchmarked against the default model trained at `n_obs=20`, and all are tuned with HPO (Optuna TPE, 6 trials per variant per dataset).
 
 - **prior\_nll**: adds an explicit prior NLL term (weight tuned by HPO) so the encoder always receives a direct gradient at zero observations alongside the posterior term.
 - **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, exposing the model to every observation count during training including zero.
 - **two\_phase**: Phase 1 trains the full model on prior NLL only so the encoder receives a clean gradient; Phase 2 freezes the encoder and fine-tunes only the noise model on posterior NLL.
 - **weighted\_random**: each batch computes `loss = w·NLL(n_obs=0) + (1-w)·NLL(n_obs=rand)` with `w` tuned by HPO, jointly optimising prior and posterior in every update.
 
-**Prior MSE / Static MSE** (train\_n\_obs = 20, with HPO):
+**Prior MSE / Static MSE** (default trained at n\_obs=20; others use variable or phase-split n\_obs; all with HPO):
 
 | Dataset | default | prior\_nll | random\_nobs | two\_phase | weighted\_random |
 |:---|:---:|:---:|:---:|:---:|:---:|
