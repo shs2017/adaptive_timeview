@@ -1,8 +1,7 @@
 import sys
 from pathlib import Path
 
-### UNCOMMENT when running in a terminal multiplexer ###
-# sys.stdout.reconfigure(line_buffering=True)
+sys.stdout.reconfigure(line_buffering=True)
 
 # import builtins
 # _orig_print = builtins.print
@@ -70,14 +69,6 @@ def compute_loss(
     prior_weight: float = 0.0,
     future_only: bool = False,
 ) -> torch.Tensor:
-    """
-    Compute training loss with optional prior NLL term and future-only normalization.
-
-    Args:
-        prior_weight: weight on direct prior NLL term (0 = standard, >0 = adds prior supervision)
-        future_only: if True, posterior NLL is computed only on future (unobserved) points,
-                     normalized by their count — keeps gradient scale consistent across n_obs
-    """
     t_obs = t[:n_obs]
     y_obs = y_batch[:, :n_obs]
 
@@ -121,7 +112,6 @@ def train_model_custom(
     x_val: torch.Tensor | None = None,
     y_val: torch.Tensor | None = None,
 ) -> None:
-    """Training loop using compute_loss — supports prior_weight and future_only."""
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     x_eval = x_val if x_val is not None else x_train
     y_eval = y_val if y_val is not None else y_train
@@ -184,7 +174,6 @@ def train_model_random_nobs(
     x_val: torch.Tensor | None = None,
     y_val: torch.Tensor | None = None,
 ) -> None:
-    """Train with n_obs sampled uniformly from [0, n_time) each batch."""
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     x_eval = x_val if x_val is not None else x_train
     y_eval = y_val if y_val is not None else y_train
@@ -228,6 +217,169 @@ def train_model_random_nobs(
                 epochs_without_improvement += 1
 
             if patience > 0 and epochs_without_improvement >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+
+def train_model_two_phase(
+    model: TimeviewAdaptive,
+    x_train: torch.Tensor,
+    t: torch.Tensor,
+    y_train: torch.Tensor,
+    n_obs: int,
+    n_epochs: int = 1000,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-5,
+    batch_size: int = 32,
+    patience: int = 20,
+    check_val_every_n_epoch: int = 10,
+    phase1_fraction: float = 0.5,
+    x_val: torch.Tensor | None = None,
+    y_val: torch.Tensor | None = None,
+) -> None:
+    """Two-phase training.
+    Phase 1: train the full model on prior NLL
+    Phase 2: freeze the encoder, train only log_sigma on posterior NLL
+    """
+    x_eval = x_val if x_val is not None else x_train
+    y_eval = y_val if y_val is not None else y_train
+    n_samples = x_train.shape[0]
+    n_epochs_1 = int(n_epochs * phase1_fraction)
+    n_epochs_2 = n_epochs - n_epochs_1
+
+    # Phase 1
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    best_loss, best_state, epochs_no_imp = float("inf"), None, 0
+
+    for epoch in range(n_epochs_1):
+        model.train()
+        for start in range(0, n_samples, batch_size):
+            idx = torch.randperm(n_samples)[start:start + batch_size]
+            if len(idx) < 2:
+                continue
+            loss = compute_loss(model, x_train[idx], y_train[idx], t, n_obs=0)
+            optimizer.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+        if (epoch + 1) % check_val_every_n_epoch == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = compute_loss(model, x_eval, y_eval, t, n_obs=0)
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                epochs_no_imp = 0
+            else:
+                epochs_no_imp += 1
+            if patience > 0 and epochs_no_imp >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    # Phase 2
+    for p in model.encoder.parameters():
+        p.requires_grad = False
+
+    posterior_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.Adam(posterior_params, lr=lr, weight_decay=weight_decay)
+    best_loss, best_state, epochs_no_imp = float("inf"), None, 0
+
+    for epoch in range(n_epochs_2):
+        model.train()
+        for start in range(0, n_samples, batch_size):
+            idx = torch.randperm(n_samples)[start:start + batch_size]
+            if len(idx) < 2:
+                continue
+            loss = compute_loss(model, x_train[idx], y_train[idx], t, n_obs=n_obs)
+            optimizer.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(posterior_params, max_norm=1.0)
+            optimizer.step()
+
+        if (epoch + 1) % check_val_every_n_epoch == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = compute_loss(model, x_eval, y_eval, t, n_obs=n_obs)
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                epochs_no_imp = 0
+            else:
+                epochs_no_imp += 1
+            if patience > 0 and epochs_no_imp >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    for p in model.encoder.parameters():
+        p.requires_grad = True
+
+
+def train_model_weighted_random_nobs(
+    model: TimeviewAdaptive,
+    x_train: torch.Tensor,
+    t: torch.Tensor,
+    y_train: torch.Tensor,
+    prior_weight: float = 0.5,
+    n_epochs: int = 1000,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-5,
+    batch_size: int = 32,
+    patience: int = 20,
+    check_val_every_n_epoch: int = 10,
+    x_val: torch.Tensor | None = None,
+    y_val: torch.Tensor | None = None,
+) -> None:
+    """Weighted sum of prior and posterior NLL with random n_obs each batch."""
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    x_eval = x_val if x_val is not None else x_train
+    y_eval = y_val if y_val is not None else y_train
+    n_time = len(t)
+    n_samples = x_train.shape[0]
+    best_loss, best_state, epochs_no_imp = float("inf"), None, 0
+
+    for epoch in range(n_epochs):
+        model.train()
+        indices = torch.randperm(n_samples)
+
+        for start in range(0, n_samples, batch_size):
+            idx = indices[start:start + batch_size]
+            if len(idx) < 2:
+                continue
+            xb, yb = x_train[idx], y_train[idx]
+            n_obs_post = torch.randint(1, n_time, (1,)).item()
+
+            try:
+                prior_loss = compute_loss(model, xb, yb, t, n_obs=0)
+                post_loss  = compute_loss(model, xb, yb, t, n_obs=n_obs_post)
+                loss = prior_weight * prior_loss + (1.0 - prior_weight) * post_loss
+            except torch.linalg.LinAlgError:
+                continue
+
+            optimizer.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+        if (epoch + 1) % check_val_every_n_epoch == 0:
+            model.eval()
+            with torch.no_grad():
+                mid = n_time // 2
+                try:
+                    val_loss = (prior_weight * compute_loss(model, x_eval, y_eval, t, 0)
+                                + (1 - prior_weight) * compute_loss(model, x_eval, y_eval, t, mid))
+                except torch.linalg.LinAlgError:
+                    val_loss = torch.tensor(float("inf"))
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                epochs_no_imp = 0
+            else:
+                epochs_no_imp += 1
+            if patience > 0 and epochs_no_imp >= patience:
                 break
 
     if best_state is not None:
@@ -337,6 +489,8 @@ def tune_adaptive_hyperparams(
     prior_weight_fixed = variant_kwargs.get("prior_weight", 0.0)
     future_only = variant_kwargs.get("future_only", False)
     kl_weight = variant_kwargs.get("kl_weight", 0.01)
+    two_phase = variant_kwargs.get("two_phase", False)
+    weighted_random_nobs = variant_kwargs.get("weighted_random_nobs", False)
     n_time = len(t_ds)
 
     def objective(trial: optuna.Trial) -> float:
@@ -347,7 +501,7 @@ def tune_adaptive_hyperparams(
         dropout_p = trial.suggest_float("dropout_p", 0.0, 0.4)
         prior_weight = (
             trial.suggest_float("prior_weight", 0.1, 2.0, log=True)
-            if prior_weight_fixed > 0.0 else 0.0
+            if (prior_weight_fixed > 0.0 or weighted_random_nobs) else 0.0
         )
 
         torch.manual_seed(seed)
@@ -364,7 +518,23 @@ def tune_adaptive_hyperparams(
             dropout_p=dropout_p,
         )
 
-        if random_nobs:
+        if two_phase:
+            phase1_fraction = trial.suggest_float("phase1_fraction", 0.2, 0.8)
+            train_model_two_phase(
+                model, x_tr, t_ds, y_tr,
+                n_obs=train_n_obs, n_epochs=n_epochs, lr=lr,
+                weight_decay=weight_decay, batch_size=batch_size,
+                phase1_fraction=phase1_fraction,
+                x_val=x_va, y_val=y_va,
+            )
+        elif weighted_random_nobs:
+            train_model_weighted_random_nobs(
+                model, x_tr, t_ds, y_tr,
+                prior_weight=prior_weight, n_epochs=n_epochs, lr=lr,
+                weight_decay=weight_decay, batch_size=batch_size,
+                x_val=x_va, y_val=y_va,
+            )
+        elif random_nobs:
             train_model_random_nobs(
                 model, x_tr, t_ds, y_tr,
                 n_epochs=n_epochs, lr=lr, weight_decay=weight_decay,
@@ -424,6 +594,8 @@ def run_prior_vs_static(
     prior_weight: float = 0.0,
     future_only: bool = False,
     random_nobs: bool = False,
+    two_phase: bool = False,
+    weighted_random_nobs: bool = False,
     hparams: dict | None = None,
 ) -> dict:
     if training_n_obs_values is None:
@@ -491,7 +663,24 @@ def run_prior_vs_static(
             hidden_sizes=_hidden,
             dropout_p=_dp,
         )
-        if random_nobs:
+        _phase1_frac = hp.get("phase1_fraction", 0.5)
+
+        if two_phase:
+            train_model_two_phase(
+                adaptive_model, x_tr, t_ds, y_tr,
+                n_obs=train_n_obs, n_epochs=n_epochs, lr=_lr,
+                weight_decay=_wd, batch_size=_bs,
+                phase1_fraction=_phase1_frac,
+                x_val=x_va, y_val=y_va,
+            )
+        elif weighted_random_nobs:
+            train_model_weighted_random_nobs(
+                adaptive_model, x_tr, t_ds, y_tr,
+                prior_weight=_pw, n_epochs=n_epochs, lr=_lr,
+                weight_decay=_wd, batch_size=_bs,
+                x_val=x_va, y_val=y_va,
+            )
+        elif random_nobs:
             train_model_random_nobs(
                 adaptive_model, x_tr, t_ds, y_tr,
                 n_epochs=n_epochs, lr=_lr, weight_decay=_wd, batch_size=_bs,
@@ -730,22 +919,25 @@ def plot_nobs_curve(
     eval_n_obs_values: list[int],
     output_path: Path | None = None,
 ):
-    """Plot posterior MSE vs eval n_obs for each variant on the same axes.
-
-    variant_results: {variant_name: run_prior_vs_static result for this dataset}
-    Expects each variant to have been trained with a single train_n_obs entry.
-    """
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    colors = {"default": "#E53935", "prior_nll": "#2196F3", "random_nobs": "#4CAF50"}
-    markers = {"default": "o", "prior_nll": "s", "random_nobs": "^"}
+    colors = {
+        "default": "#E53935", "prior_nll": "#2196F3", "random_nobs": "#4CAF50",
+        "future_only": "#FF9800", "random_nobs_fo": "#9C27B0",
+        "two_phase": "#00BCD4", "weighted_random": "#795548",
+    }
+    markers = {
+        "default": "o", "prior_nll": "s", "random_nobs": "^",
+        "future_only": "D", "random_nobs_fo": "v",
+        "two_phase": "P", "weighted_random": "X",
+    }
 
     for ax_idx, metric in enumerate(["mse", "crps"]):
         ax = axes[ax_idx]
 
         for v_name, res in variant_results.items():
             static_val = res["static"][metric]
-            # Take the first (and expected only) trained model entry
+
             model_res = next(iter(res["adaptive_models"].values()))
 
             # n_obs=0 is the prior
@@ -799,9 +991,11 @@ def main():
     eval_n_obs_values = [1, 2, 5, 10, 15, 20, 25, 30, 40]
 
     variants = {
-        "default":     dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.0, future_only=False),
-        "prior_nll":   dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.5, future_only=False),
-        "random_nobs": dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=True,  prior_weight=0.0, future_only=False),
+        "default":         dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.0, future_only=False),
+        "prior_nll":       dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.5, future_only=False),
+        "random_nobs":     dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=True,  prior_weight=0.0, future_only=False),
+        "two_phase":       dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.0, future_only=False, two_phase=True),
+        "weighted_random": dict(n_epochs=1000, kl_weight=0.01, random_obs=False, random_nobs=False, prior_weight=0.5, future_only=False, weighted_random_nobs=True),
     }
 
     figures_dir = Path(__file__).parent.parent / "figures"
@@ -825,9 +1019,31 @@ def main():
             "flchain":       {"lr": 0.00077, "weight_decay": 5.58e-5,  "batch_size": 32, "dropout_p": 0.010, "h0": 111, "h1": 113, "h2": 18},
             "stress_strain": {"lr": 0.00081, "weight_decay": 1.67e-5,  "batch_size": 32, "dropout_p": 0.192, "h0": 115, "h1": 110, "h2": 115},
         },
+        # New variants — seed with default hparams as starting point
+        "future_only": {
+            "airfoil":       {"lr": 0.00195, "weight_decay": 1.02e-6,  "batch_size": 64, "dropout_p": 0.337, "h0": 54,  "h1": 33,  "h2": 16},
+            "flchain":       {"lr": 0.00874, "weight_decay": 8.86e-5,  "batch_size": 16, "dropout_p": 0.004, "h0": 28,  "h1": 20,  "h2": 82},
+            "stress_strain": {"lr": 0.00231, "weight_decay": 1.80e-6,  "batch_size": 32, "dropout_p": 0.118, "h0": 98,  "h1": 74,  "h2": 61},
+        },
+        "random_nobs_fo": {
+            "airfoil":       {"lr": 0.00231, "weight_decay": 1.20e-5,  "batch_size": 32, "dropout_p": 0.267, "h0": 85,  "h1": 85,  "h2": 122},
+            "flchain":       {"lr": 0.00077, "weight_decay": 5.58e-5,  "batch_size": 32, "dropout_p": 0.010, "h0": 111, "h1": 113, "h2": 18},
+            "stress_strain": {"lr": 0.00081, "weight_decay": 1.67e-5,  "batch_size": 32, "dropout_p": 0.192, "h0": 115, "h1": 110, "h2": 115},
+        },
+        # New variants — seed with default hparams + phase1_fraction=0.5 / prior_weight=0.5
+        "two_phase": {
+            "airfoil":       {"lr": 0.00195, "weight_decay": 1.02e-6,  "batch_size": 64, "dropout_p": 0.337, "h0": 54,  "h1": 33,  "h2": 16,  "phase1_fraction": 0.5},
+            "flchain":       {"lr": 0.00874, "weight_decay": 8.86e-5,  "batch_size": 16, "dropout_p": 0.004, "h0": 28,  "h1": 20,  "h2": 82,  "phase1_fraction": 0.5},
+            "stress_strain": {"lr": 0.00231, "weight_decay": 1.80e-6,  "batch_size": 32, "dropout_p": 0.118, "h0": 98,  "h1": 74,  "h2": 61,  "phase1_fraction": 0.5},
+        },
+        "weighted_random": {
+            "airfoil":       {"lr": 0.00078, "weight_decay": 8.56e-5,  "batch_size": 16, "dropout_p": 0.077, "h0": 114, "h1": 17,  "h2": 102, "prior_weight": 1.303},
+            "flchain":       {"lr": 0.00364, "weight_decay": 2.26e-6,  "batch_size": 64, "dropout_p": 0.209, "h0": 126, "h1": 106, "h2": 68,  "prior_weight": 0.346},
+            "stress_strain": {"lr": 0.00710, "weight_decay": 1.63e-6,  "batch_size": 64, "dropout_p": 0.311, "h0": 105, "h1": 75,  "h2": 80,  "prior_weight": 1.355},
+        },
     }
 
-    n_tune = 15  # additional trials on top of the enqueued old best
+    n_tune = 5  # additional trials on top of the enqueued old best
 
     # Previous results with lr in [1e-4, 1e-2]
     old_results = {
@@ -892,23 +1108,29 @@ def main():
     print("=" * 80)
     print_variant_comparison(all_variant_results)
 
-    # Compare old vs new HPO
+    # Compare old vs new for variants that have prior results
     print("\n" + "=" * 80)
-    print("OLD (lr≤1e-2) vs NEW (lr≤1e-1): Prior MSE / Static MSE ratio")
+    print("OLD (lr≤1e-2) vs NEW: Prior MSE / Static MSE ratio")
     print("=" * 80)
     for ds in datasets:
         print(f"\n{ds.upper()}")
-        print(f"  {'variant':>14} {'old':>8} {'new':>8} {'diff':>8}")
-        print(f"  {'-'*40}")
+        print(f"  {'variant':>16} {'old':>8} {'new':>8} {'diff':>8}")
+        print(f"  {'-'*44}")
         for v_name in variants:
-            if ds in all_variant_results[v_name]:
+            if ds in all_variant_results[v_name] and v_name in old_results and ds in old_results[v_name]:
                 new_ratio = (
                     next(iter(all_variant_results[v_name][ds]["adaptive_models"].values()))["prior"]["mse"]
                     / all_variant_results[v_name][ds]["static"]["mse"]
                 )
                 old_ratio = old_results[v_name][ds]["prior_mse_ratio"]
                 diff = new_ratio - old_ratio
-                print(f"  {v_name:>14} {old_ratio:>7.3f}x {new_ratio:>7.3f}x {diff:>+7.3f}")
+                print(f"  {v_name:>16} {old_ratio:>7.3f}x {new_ratio:>7.3f}x {diff:>+7.3f}")
+            elif ds in all_variant_results[v_name]:
+                new_ratio = (
+                    next(iter(all_variant_results[v_name][ds]["adaptive_models"].values()))["prior"]["mse"]
+                    / all_variant_results[v_name][ds]["static"]["mse"]
+                )
+                print(f"  {v_name:>16} {'N/A':>8} {new_ratio:>7.3f}x {'':>8}")
 
     # Plot n_obs curves per dataset
     for dataset_name in datasets:

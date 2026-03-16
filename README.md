@@ -78,35 +78,51 @@ The approach works in three stages:
 
 ## (WIP) Prior vs Static Comparison
 
-We compare three training strategies for the adaptive model, evaluating how well the **prior** (zero observations) performs relative to the static model, and how performance scales with observations at inference time. All models are tuned with HPO (30 trials, Optuna TPE) per variant per dataset.
+We compare five training strategies for the adaptive model, evaluating how well the **prior** (zero observations) performs relative to the static model, and how performance scales with observations at inference time. All models are tuned with HPO (Optuna TPE, 6 trials) per variant per dataset.
 
 ### Training strategies
 
 - **default**: standard posterior NLL training at a fixed `train_n_obs=20`
 - **prior\_nll**: adds an explicit prior NLL term (weight tuned by HPO) to the training objective
 - **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, covering all observation counts during training
+- **two\_phase**: Phase 1 trains the full model on prior NLL only (encoder gets clean gradient); Phase 2 freezes the encoder and trains only the noise model on posterior NLL
+- **weighted\_random**: each batch computes `loss = w · NLL(n_obs=0) + (1−w) · NLL(n_obs=rand)`, simultaneously training prior and posterior
 
 ### Prior MSE / Static MSE (train\_n\_obs = 20, with HPO)
 
-| Dataset | default | prior\_nll | random\_nobs |
-|:---|:---:|:---:|:---:|
-| Airfoil | 3.98× | **0.65×** | 1.11× |
-| FLChain | 2.66× | 1.15× | 1.93× |
-| Stress-Strain | 1.27× | **0.84×** | 1.08× |
+| Dataset | default | prior\_nll | random\_nobs | two\_phase | weighted\_random |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| Airfoil | 3.94× | 0.68× | 1.04× | **0.67×** | 0.78× |
+| FLChain | 2.73× | 1.14× | 1.86× | **0.96×** | 1.08× |
+| Stress-Strain | 1.25× | 0.91× | 1.02× | **0.87×** | 1.03× |
 
-The default model's prior degrades severely at `train_n_obs=20` because the posterior NLL gradient to the prior parameters attenuates as O(1/n) — proven formally in [`proof_gradient_attenuation.tex`](proof_gradient_attenuation.tex). Adding an explicit prior NLL term (`prior_nll`) eliminates this degradation and beats the static model on two of three datasets. Random n_obs training (`random_nobs`) partially fixes the issue without requiring an extra loss term.
+The default model's prior degrades severely at `train_n_obs=20` because the posterior NLL gradient to the prior parameters attenuates as O(1/n). **Two-phase training** is the strongest fix: by giving the encoder exclusive ownership of the prior NLL loss first, it receives clean gradient signal undiluted by posterior noise, then the noise model calibrates separately. It is the only variant that beats the static model on all three datasets. `prior_nll` is also effective (beats static on 2/3 datasets); `weighted_random` is middling; `random_nobs` provides only marginal improvement.
 
 ### Performance vs observations at inference time
 
 <table>
 <tr>
-<td><img src="figures/nobs_curve_airfoil.png" alt="Airfoil n_obs curve"/></td>
-<td><img src="figures/nobs_curve_flchain.png" alt="FLChain n_obs curve"/></td>
-<td><img src="figures/nobs_curve_stress_strain.png" alt="Stress-Strain n_obs curve"/></td>
+<td><img src="figures/nobs_curve_airfoil_widerlr.png" alt="Airfoil n_obs curve"/></td>
+<td><img src="figures/nobs_curve_flchain_widerlr.png" alt="FLChain n_obs curve"/></td>
+<td><img src="figures/nobs_curve_stress_strain_widerlr.png" alt="Stress-Strain n_obs curve"/></td>
 </tr>
 </table>
 
-Each curve shows MSE and CRPS as a function of observations provided at inference (0 = prior only). The `default` model is competitive only near `n_obs=20` (its training count); `prior_nll` performs well across the full range; `random_nobs` degrades more gracefully than default but does not match `prior_nll`.
+Each curve shows MSE and CRPS as a function of observations provided at inference (0 = prior only). The `default` model is competitive only near `n_obs=20` (its training count); `two_phase` and `prior_nll` perform well across the full range; `random_nobs` and `weighted_random` degrade more gracefully than default but do not match the best variants.
+
+### two\_phase vs Static: future MSE after posterior updates
+
+Future MSE (evaluated on unobserved time points only) for the `two_phase` model vs static baseline MSE (full trajectory).
+
+| n\_obs | Airfoil | | FLChain | | Stress-Strain | |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| | two\_phase | static | two\_phase | static | two\_phase | static |
+| 0 (prior) | 0.147 | 0.221 | 0.202 | 0.209 | 0.307 | 0.355 |
+| 5 | 0.145 | 0.221 | 0.189 | 0.209 | 0.357 | 0.355 |
+| 10 | 0.271 | 0.221 | 0.220 | 0.209 | 0.309 | 0.355 |
+| 20 | 0.162 | 0.221 | 0.369 | 0.209 | 0.432 | 0.355 |
+
+Note: future MSE is computed on the remaining time points after n\_obs observations, so the prediction window shrinks and shifts later in the trajectory as n\_obs increases — direct comparisons across rows measure different tasks. The nobs curve plots above give the clearest overall picture.
 
 ---
 
