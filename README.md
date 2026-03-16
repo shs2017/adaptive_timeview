@@ -76,26 +76,29 @@ The approach works in three stages:
 
 ---
 
-## (WIP) Prior vs Static Comparison
+## Prior vs Static Comparison
 
-We compare five training strategies for the adaptive model, evaluating how well the **prior** (zero observations) performs relative to the static model, and how performance scales with observations at inference time. All models are tuned with HPO (Optuna TPE, 6 trials) per variant per dataset.
+We investigate whether the adaptive model's prior (zero observations) can match or beat the static model, and how performance scales as observations arrive at inference time.
 
-### Training strategies
+### Prior quality degrades with training n\_obs
 
-- **default**: standard posterior NLL at a fixed `train_n_obs=20`. When enough observations are provided the posterior fits the data well, leaving little residual signal back to the encoder's prior parameters — so prior quality degrades.
-- **prior\_nll**: augments the objective with an explicit prior NLL term (weight tuned by HPO), giving the encoder a direct gradient signal at zero observations alongside the posterior term.
-- **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, exposing the model to every observation count during training including zero. In practice the noisy and variable training signal makes early stopping trigger prematurely, limiting its effectiveness.
-- **two\_phase**: Phase 1 trains the full model on prior NLL only so the encoder receives a clean, undiluted gradient; Phase 2 freezes the encoder and fine-tunes only the noise model on posterior NLL.
-- **weighted\_random**: each batch computes `loss = w·NLL(n_obs=0) + (1−w)·NLL(n_obs=rand)` with `w` tuned by HPO, jointly optimising the prior and a randomly-chosen posterior in every update.
-
-### Default model: prior degrades with training n\_obs
+The default training objective (posterior NLL at a fixed n\_obs) encourages the model to fit observations well, leaving little signal for the encoder to learn a good prior. We train the default model across a range of n\_obs values and measure the prior's MSE relative to static.
 
 <p align="center">
 <img src="figures/prior_ratio_vs_static.png" alt="Prior ratio vs training n_obs" width="60%"/>
 </p>
-<p align="center"><sub>Prior MSE / Static MSE for the default model as a function of training n_obs (no HPO). The prior degrades monotonically: when the posterior fits the training observations well, the encoder receives little signal about prior quality.</sub></p>
+<p align="center"><sub>Prior MSE / Static MSE for the default model across training n_obs values (no HPO). All three datasets show monotonic degradation.</sub></p>
 
-### Prior MSE / Static MSE (train\_n\_obs = 20, with HPO)
+### Alternative training strategies recover prior quality
+
+To fix this, we compare four alternatives to standard training, all evaluated at `train_n_obs=20` with HPO (Optuna TPE, 6 trials per variant per dataset).
+
+- **prior\_nll**: adds an explicit prior NLL term (weight tuned by HPO) so the encoder always receives a direct gradient at zero observations alongside the posterior term.
+- **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, exposing the model to every observation count during training including zero.
+- **two\_phase**: Phase 1 trains the full model on prior NLL only so the encoder receives a clean gradient; Phase 2 freezes the encoder and fine-tunes only the noise model on posterior NLL.
+- **weighted\_random**: each batch computes `loss = w·NLL(n_obs=0) + (1-w)·NLL(n_obs=rand)` with `w` tuned by HPO, jointly optimising prior and posterior in every update.
+
+**Prior MSE / Static MSE** (train\_n\_obs = 20, with HPO):
 
 | Dataset | default | prior\_nll | random\_nobs | two\_phase | weighted\_random |
 |:---|:---:|:---:|:---:|:---:|:---:|
@@ -103,9 +106,9 @@ We compare five training strategies for the adaptive model, evaluating how well 
 | FLChain | 2.90× | 1.10× | 1.26× | 1.07× | **1.03×** |
 | Stress-Strain | 1.31× | **0.94×** | 1.21× | 1.05× | 1.04× |
 
-The default prior degrades severely as the posterior fits the training observations and the encoder receives little corrective signal. The remaining variants all improve prior quality, with `weighted_random` the strongest overall. `random_nobs` underperforms relative to the other fixes, likely because its highly variable per-batch loss (a different n_obs each batch) makes convergence harder. No single variant beats static on all three datasets simultaneously.
+All alternatives improve over the default. `weighted_random` performs best overall; `random_nobs` is the weakest fix, likely because its highly variable per-batch loss (a different n_obs each batch) makes convergence harder. No single variant beats static on all three datasets simultaneously.
 
-### Performance vs observations at inference time
+The curves below show MSE and CRPS as a function of observations at inference (0 = prior only). `weighted_random` and `prior_nll` are the most consistent across the full range, while `default` is competitive only near its training count.
 
 <table>
 <tr>
@@ -114,8 +117,6 @@ The default prior degrades severely as the posterior fits the training observati
 <td><img src="figures/nobs_curve_stress_strain_widerlr.png" alt="Stress-Strain n_obs curve"/></td>
 </tr>
 </table>
-
-Each curve shows MSE and CRPS as a function of observations provided at inference (0 = prior only). `weighted_random` and `prior_nll` are the most consistent — starting near or below the static baseline and improving steadily with more data. `default` performs well only near its training count.
 
 ---
 
