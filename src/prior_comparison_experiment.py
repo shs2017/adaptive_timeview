@@ -105,8 +105,8 @@ def train_model_custom(
     lr: float = 1e-3,
     weight_decay: float = 1e-5,
     batch_size: int = 32,
-    patience: int = 20,
-    check_val_every_n_epoch: int = 10,
+    patience: int = 10,
+    check_val_every_n_epoch: int = 1,
     prior_weight: float = 0.0,
     future_only: bool = False,
     x_val: torch.Tensor | None = None,
@@ -168,8 +168,8 @@ def train_model_random_nobs(
     lr: float = 1e-3,
     weight_decay: float = 1e-5,
     batch_size: int = 32,
-    patience: int = 20,
-    check_val_every_n_epoch: int = 10,
+    patience: int = 10,
+    check_val_every_n_epoch: int = 1,
     future_only: bool = False,
     x_val: torch.Tensor | None = None,
     y_val: torch.Tensor | None = None,
@@ -233,8 +233,8 @@ def train_model_two_phase(
     lr: float = 1e-3,
     weight_decay: float = 1e-5,
     batch_size: int = 32,
-    patience: int = 20,
-    check_val_every_n_epoch: int = 10,
+    patience: int = 10,
+    check_val_every_n_epoch: int = 1,
     phase1_fraction: float = 0.5,
     x_val: torch.Tensor | None = None,
     y_val: torch.Tensor | None = None,
@@ -255,8 +255,9 @@ def train_model_two_phase(
 
     for epoch in range(n_epochs_1):
         model.train()
+        indices = torch.randperm(n_samples)
         for start in range(0, n_samples, batch_size):
-            idx = torch.randperm(n_samples)[start:start + batch_size]
+            idx = indices[start:start + batch_size]
             if len(idx) < 2:
                 continue
             loss = compute_loss(model, x_train[idx], y_train[idx], t, n_obs=0)
@@ -290,8 +291,9 @@ def train_model_two_phase(
 
     for epoch in range(n_epochs_2):
         model.train()
+        indices = torch.randperm(n_samples)
         for start in range(0, n_samples, batch_size):
-            idx = torch.randperm(n_samples)[start:start + batch_size]
+            idx = indices[start:start + batch_size]
             if len(idx) < 2:
                 continue
             loss = compute_loss(model, x_train[idx], y_train[idx], t, n_obs=n_obs)
@@ -329,8 +331,8 @@ def train_model_weighted_random_nobs(
     lr: float = 1e-3,
     weight_decay: float = 1e-5,
     batch_size: int = 32,
-    patience: int = 20,
-    check_val_every_n_epoch: int = 10,
+    patience: int = 10,
+    check_val_every_n_epoch: int = 1,
     x_val: torch.Tensor | None = None,
     y_val: torch.Tensor | None = None,
 ) -> None:
@@ -397,9 +399,13 @@ def train_model_random_obs(
     weight_decay: float = 1e-5,
     batch_size: int = 32,
     patience: int = 10,
+    x_val: torch.Tensor | None = None,
+    y_val: torch.Tensor | None = None,
 ) -> None:
     """Like train_model but samples n_obs random (sorted) time points each batch."""
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    x_eval = x_val if x_val is not None else x_train
+    y_eval = y_val if y_val is not None else y_train
     n_time = len(t)
     n_samples = x_train.shape[0]
     best_loss = float("inf")
@@ -441,12 +447,12 @@ def train_model_random_obs(
         with torch.no_grad():
             obs_idx = torch.randperm(n_time)[:n_obs].sort().values
             t_obs = t[obs_idx]
-            y_obs = y_train[:, obs_idx]
-            mu_0, Sigma_0, bias = model.encode(x_train)
+            y_obs = y_eval[:, obs_idx]
+            mu_0, Sigma_0, bias = model.encode(x_eval)
             y_mean, y_var, _, _ = model.update_and_predict(
-                x_train, t_obs, y_obs, t, mu_0=mu_0, Sigma_0=Sigma_0, bias=bias,
+                x_eval, t_obs, y_obs, t, mu_0=mu_0, Sigma_0=Sigma_0, bias=bias,
             )
-            nll = 0.5 * torch.log(2 * np.pi * y_var) + 0.5 * (y_train - y_mean) ** 2 / y_var
+            nll = 0.5 * torch.log(2 * np.pi * y_var) + 0.5 * (y_eval - y_mean) ** 2 / y_var
             val_loss = nll.mean() + model.kl_weight * model.kl_divergence(mu_0, Sigma_0)
 
         if val_loss < best_loss:
@@ -562,7 +568,7 @@ def tune_adaptive_hyperparams(
         with torch.no_grad():
             prior_m = eval_prior(model, x_va, y_va, t_ds)
             post_m = eval_posterior(model, x_va, y_va, t_ds, min(train_n_obs, n_time - 1))
-        return 0.5 * prior_m["mse"] + 0.5 * post_m.get("future_mse", post_m["full_mse"])
+        return 0.5 * prior_m["mse"] + 0.5 * post_m["full_mse"]
 
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(
@@ -690,6 +696,7 @@ def run_prior_vs_static(
             train_model_random_obs(
                 adaptive_model, x_tr, t_ds, y_tr,
                 n_obs=train_n_obs, n_epochs=n_epochs,
+                x_val=x_va, y_val=y_va,
             )
         elif _pw > 0.0 or future_only:
             train_model_custom(
@@ -753,16 +760,16 @@ def print_summary_table(results: dict, dataset_name: str):
         sample_nobs = available_eval_nobs[:3]
 
     for eval_n in sample_nobs:
-        print(f"Posterior (eval_n_obs={eval_n}) future MSE vs Static:")
+        print(f"Posterior (eval_n_obs={eval_n}) full MSE vs Static:")
         print(f"  {'train_n_obs':>12} {'Post MSE':>12} {'vs Static':>12} {'Post CRPS':>12}")
         print(f"  {'-' * 52}")
         for train_n_obs, model_res in results["adaptive_models"].items():
             if eval_n in model_res["posterior"]:
                 post = model_res["posterior"][eval_n]
-                future_mse = post.get("future_mse", post.get("full_mse", float("nan")))
-                future_crps = post.get("future_crps", post.get("full_crps", float("nan")))
-                ratio = future_mse / static_mse
-                print(f"  {train_n_obs:>12} {future_mse:>12.5f} {ratio:>11.3f}x {future_crps:>12.5f}")
+                full_mse = post.get("full_mse", float("nan"))
+                full_crps = post.get("full_crps", float("nan"))
+                ratio = full_mse / static_mse
+                print(f"  {train_n_obs:>12} {full_mse:>12.5f} {ratio:>11.3f}x {full_crps:>12.5f}")
         print()
 
 
@@ -946,9 +953,8 @@ def plot_nobs_curve(
 
             for n in sorted(eval_n_obs_values):
                 if n in model_res["posterior"]:
-                    future_key = f"future_{metric}"
                     full_key = f"full_{metric}"
-                    val = model_res["posterior"][n].get(future_key, model_res["posterior"][n].get(full_key, float("nan")))
+                    val = model_res["posterior"][n].get(full_key, float("nan"))
                     nobs_vals.append(n)
                     metric_vals.append(val)
 
@@ -963,7 +969,7 @@ def plot_nobs_curve(
         ax.axhline(y=static_val, color="black", linestyle="--", linewidth=1.5, label="static")
 
         ax.set_xlabel("n_obs at inference", fontsize=11)
-        ax.set_ylabel(metric.upper(), fontsize=11)
+        ax.set_ylabel(f"{metric.upper()} (full trajectory)", fontsize=11)
         ax.set_title(f"{dataset_name} — {metric.upper()} vs observations", fontsize=12)
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)

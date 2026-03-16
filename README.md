@@ -82,21 +82,28 @@ We compare five training strategies for the adaptive model, evaluating how well 
 
 ### Training strategies
 
-- **default**: standard posterior NLL training at a fixed `train_n_obs=20`
-- **prior\_nll**: adds an explicit prior NLL term (weight tuned by HPO) to the training objective
-- **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, covering all observation counts during training
-- **two\_phase**: Phase 1 trains the full model on prior NLL only (encoder gets clean gradient); Phase 2 freezes the encoder and trains only the noise model on posterior NLL
-- **weighted\_random**: each batch computes `loss = w · NLL(n_obs=0) + (1−w) · NLL(n_obs=rand)`, simultaneously training prior and posterior
+- **default**: standard posterior NLL at a fixed `train_n_obs=20`. When enough observations are provided the posterior fits the data well, leaving little residual signal back to the encoder's prior parameters — so prior quality degrades.
+- **prior\_nll**: augments the objective with an explicit prior NLL term (weight tuned by HPO), giving the encoder a direct gradient signal at zero observations alongside the posterior term.
+- **random\_nobs**: samples `n_obs ~ Uniform[0, N)` each batch, exposing the model to every observation count during training including zero. In practice the noisy and variable training signal makes early stopping trigger prematurely, limiting its effectiveness.
+- **two\_phase**: Phase 1 trains the full model on prior NLL only so the encoder receives a clean, undiluted gradient; Phase 2 freezes the encoder and fine-tunes only the noise model on posterior NLL.
+- **weighted\_random**: each batch computes `loss = w·NLL(n_obs=0) + (1−w)·NLL(n_obs=rand)` with `w` tuned by HPO, jointly optimising the prior and a randomly-chosen posterior in every update.
+
+### Default model: prior degrades with training n\_obs
+
+<p align="center">
+<img src="figures/prior_ratio_vs_static.png" alt="Prior ratio vs training n_obs" width="60%"/>
+</p>
+<p align="center"><sub>Prior MSE / Static MSE for the default model as a function of training n_obs (no HPO). The prior degrades monotonically: when the posterior fits the training observations well, the encoder receives little signal about prior quality.</sub></p>
 
 ### Prior MSE / Static MSE (train\_n\_obs = 20, with HPO)
 
 | Dataset | default | prior\_nll | random\_nobs | two\_phase | weighted\_random |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| Airfoil | 3.94× | 0.68× | 1.04× | **0.67×** | 0.78× |
-| FLChain | 2.73× | 1.14× | 1.86× | **0.96×** | 1.08× |
-| Stress-Strain | 1.25× | 0.91× | 1.02× | **0.87×** | 1.03× |
+| Airfoil | 3.81× | 0.83× | 1.40× | 0.80× | **0.70×** |
+| FLChain | 2.90× | 1.10× | 1.26× | 1.07× | **1.03×** |
+| Stress-Strain | 1.31× | **0.94×** | 1.21× | 1.05× | 1.04× |
 
-The default model's prior degrades severely at `train_n_obs=20` because the posterior NLL gradient to the prior parameters attenuates as O(1/n). **Two-phase training** is the strongest fix: by giving the encoder exclusive ownership of the prior NLL loss first, it receives clean gradient signal undiluted by posterior noise, then the noise model calibrates separately. It is the only variant that beats the static model on all three datasets. `prior_nll` is also effective (beats static on 2/3 datasets); `weighted_random` is middling; `random_nobs` provides only marginal improvement.
+The default prior degrades severely as the posterior fits the training observations and the encoder receives little corrective signal. The remaining variants all improve prior quality, with `weighted_random` the strongest overall. `random_nobs` underperforms relative to the other fixes, likely because its highly variable per-batch loss (a different n_obs each batch) makes convergence harder. No single variant beats static on all three datasets simultaneously.
 
 ### Performance vs observations at inference time
 
@@ -108,21 +115,7 @@ The default model's prior degrades severely at `train_n_obs=20` because the post
 </tr>
 </table>
 
-Each curve shows MSE and CRPS as a function of observations provided at inference (0 = prior only). The `default` model is competitive only near `n_obs=20` (its training count); `two_phase` and `prior_nll` perform well across the full range; `random_nobs` and `weighted_random` degrade more gracefully than default but do not match the best variants.
-
-### two\_phase vs Static: future MSE after posterior updates
-
-Future MSE (evaluated on unobserved time points only) for the `two_phase` model vs static baseline MSE (full trajectory).
-
-| n\_obs | Airfoil | | FLChain | | Stress-Strain | |
-|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| | two\_phase | static | two\_phase | static | two\_phase | static |
-| 0 (prior) | 0.147 | 0.221 | 0.202 | 0.209 | 0.307 | 0.355 |
-| 5 | 0.145 | 0.221 | 0.189 | 0.209 | 0.357 | 0.355 |
-| 10 | 0.271 | 0.221 | 0.220 | 0.209 | 0.309 | 0.355 |
-| 20 | 0.162 | 0.221 | 0.369 | 0.209 | 0.432 | 0.355 |
-
-Note: future MSE is computed on the remaining time points after n\_obs observations, so the prediction window shrinks and shifts later in the trajectory as n\_obs increases — direct comparisons across rows measure different tasks. The nobs curve plots above give the clearest overall picture.
+Each curve shows MSE and CRPS as a function of observations provided at inference (0 = prior only). `weighted_random` and `prior_nll` are the most consistent — starting near or below the static baseline and improving steadily with more data. `default` performs well only near its training count.
 
 ---
 
