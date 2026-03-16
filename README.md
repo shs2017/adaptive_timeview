@@ -98,7 +98,7 @@ To fix this, we compare four alternatives to standard training. All are benchmar
 - **two\_phase**: Phase 1 trains the full model on prior NLL only so the encoder receives a clean gradient; Phase 2 freezes the encoder and fine-tunes only the noise model on posterior NLL.
 - **weighted\_random**: each batch computes `loss = w·NLL(n_obs=0) + (1-w)·NLL(n_obs=rand)` with `w` tuned by HPO, jointly optimising prior and posterior in every update.
 
-**Prior MSE / Static MSE** (default trained at n\_obs=20; others use variable or phase-split n\_obs; all with HPO):
+**Prior MSE / Static MSE** (with HPO):
 
 | Dataset | default | prior\_nll | random\_nobs | two\_phase | weighted\_random |
 |:---|:---:|:---:|:---:|:---:|:---:|
